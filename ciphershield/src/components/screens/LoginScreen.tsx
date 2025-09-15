@@ -5,6 +5,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Checkbox } from '../ui/checkbox';
+import { invoke } from '@tauri-apps/api/core';
 
 interface LoginScreenProps {
   onLogin: () => void;
@@ -15,10 +16,21 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLogin();
+    try {
+      const result = await invoke('login', { input: { email, password } });
+      if (result.success) {
+        onLogin();
+      } else {
+        setError(result.error || 'Login failed');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setError(err.message || 'An error occurred during login');
+    }
   };
 
   return (
@@ -35,8 +47,8 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                 Sign in to CipherShield Pro to protect your sensitive data
               </CardDescription>
             </div>
+            {error && <p className="text-destructive text-sm">{error}</p>}
           </CardHeader>
-          
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
@@ -51,7 +63,6 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                   className="h-11"
                 />
               </div>
-              
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
                 <div className="relative">
@@ -79,7 +90,6 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                   </Button>
                 </div>
               </div>
-              
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="remember"
@@ -90,7 +100,6 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                   Remember me for 30 days
                 </Label>
               </div>
-              
               <Button 
                 type="submit" 
                 className="w-full h-11 bg-primary hover:bg-primary/90"
@@ -98,7 +107,6 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               >
                 Sign In Securely
               </Button>
-              
               <div className="text-center space-y-2">
                 <Button variant="link" className="text-sm text-muted-foreground">
                   Forgot your password?
@@ -110,7 +118,6 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             </form>
           </CardContent>
         </Card>
-        
         <div className="mt-6 text-center text-xs text-muted-foreground">
           CipherShield Pro v2.1.0 | SOC 2 Type II Certified
         </div>

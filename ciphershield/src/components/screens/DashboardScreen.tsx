@@ -9,6 +9,9 @@ import { Progress } from '../ui/progress';
 import { Separator } from '../ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
+import { Input } from '../ui/input';
+import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 
 interface DashboardScreenProps {
   onNavigate: (screen: string) => void;
@@ -17,6 +20,7 @@ interface DashboardScreenProps {
 export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
   const [textInput, setTextInput] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  const [templateName, setTemplateName] = useState('');
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -28,11 +32,51 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    // Handle file drop logic here
+    const files = Array.from(e.dataTransfer.files).map(file => file.path);
+    if (files.length > 0) {
+      const result = await invoke('process_files', {
+        files,
+        action: 'anonymize',
+        template_id: null,
+      });
+      console.log(result);
+      onNavigate('process');
+    }
+  };
+
+  const handleBrowse = async () => {
+    const selected = await open({
+      multiple: true,
+      filters: [{ name: 'Data Files', extensions: ['pdf', 'csv', 'json', 'xml', 'txt'] }],
+    });
+    if (Array.isArray(selected) && selected.length > 0) {
+      const result = await invoke('process_files', {
+        files: selected,
+        action: 'anonymize',
+        template_id: null,
+      });
+      console.log(result);
+      onNavigate('process');
+    }
+  };
+
+  const handleTextProcess = async () => {
+    if (textInput.trim()) {
+      const result = await invoke('process_text', {
+        text: textInput,
+        action: 'anonymize',
+        save_template: !!templateName,
+        template_name: templateName || undefined,
+      });
+      console.log(result);
+      setTextInput('');
+      setTemplateName('');
+      onNavigate('process');
+    }
   };
 
   const recentProcesses = [
@@ -43,7 +87,6 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -52,12 +95,9 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">1,247</div>
-            <p className="text-xs text-muted-foreground">
-              +12% from last month
-            </p>
+            <p className="text-xs text-muted-foreground">+12% from last month</p>
           </CardContent>
         </Card>
-        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">PII Elements Detected</CardTitle>
@@ -65,12 +105,9 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">45,231</div>
-            <p className="text-xs text-muted-foreground">
-              +8% from last month
-            </p>
+            <p className="text-xs text-muted-foreground">+8% from last month</p>
           </CardContent>
         </Card>
-        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
@@ -78,12 +115,9 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">99.8%</div>
-            <p className="text-xs text-muted-foreground">
-              +0.2% from last month
-            </p>
+            <p className="text-xs text-muted-foreground">+0.2% from last month</p>
           </CardContent>
         </Card>
-        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Processing Time</CardTitle>
@@ -91,30 +125,21 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">2.3s</div>
-            <p className="text-xs text-muted-foreground">
-              -0.5s from last month
-            </p>
+            <p className="text-xs text-muted-foreground">-0.5s from last month</p>
           </CardContent>
         </Card>
       </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Processing Area */}
         <div className="lg:col-span-2 space-y-6">
-          {/* File Upload Zone */}
           <Card>
             <CardHeader>
               <CardTitle>Upload Files for Processing</CardTitle>
-              <CardDescription>
-                Drag and drop files or click to browse. Supports CSV, JSON, XML, TXT formats.
-              </CardDescription>
+              <CardDescription>Drag and drop multiple files or click to browse. Supports PDF, CSV, JSON, XML, TXT formats.</CardDescription>
             </CardHeader>
             <CardContent>
               <div
                 className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                  dragActive 
-                    ? 'border-primary bg-primary/5' 
-                    : 'border-muted-foreground/25 hover:border-primary/50'
+                  dragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-primary/50'
                 }`}
                 onDragEnter={handleDrag}
                 onDragLeave={handleDrag}
@@ -124,24 +149,16 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
                 <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
                 <div className="space-y-2">
                   <p className="text-lg font-medium">Drop files here</p>
-                  <p className="text-sm text-muted-foreground">
-                    or click to browse your computer
-                  </p>
-                  <Button className="mt-4">
-                    Select Files
-                  </Button>
+                  <p className="text-sm text-muted-foreground">or click to browse your computer</p>
+                  <Button className="mt-4" onClick={handleBrowse}>Select Files</Button>
                 </div>
               </div>
             </CardContent>
           </Card>
-
-          {/* Text Input */}
           <Card>
             <CardHeader>
               <CardTitle>Direct Text Processing</CardTitle>
-              <CardDescription>
-                Paste or type text directly for immediate PII detection and anonymization.
-              </CardDescription>
+              <CardDescription>Paste or type text directly for immediate PII detection and anonymization.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
@@ -155,28 +172,34 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
                   className="mt-2"
                 />
               </div>
+              <div>
+                <Label htmlFor="template-name">Template Name (Optional)</Label>
+                <Input
+                  id="template-name"
+                  placeholder="Enter template name to save mappings"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="mt-2"
+                />
+              </div>
               <div className="flex gap-2">
-                <Button 
-                  onClick={() => onNavigate('process')}
+                <Button
+                  onClick={handleTextProcess}
                   disabled={!textInput.trim()}
                   className="bg-primary hover:bg-primary/90"
                 >
                   Process Text
                 </Button>
-                <Button variant="outline">
+                <Button variant="outline" onClick={() => { setTextInput(''); setTemplateName(''); }}>
                   Clear
                 </Button>
               </div>
             </CardContent>
           </Card>
-
-          {/* Recent Processes */}
           <Card>
             <CardHeader>
               <CardTitle>Recent Processing Jobs</CardTitle>
-              <CardDescription>
-                View and manage your recent PII processing tasks.
-              </CardDescription>
+              <CardDescription>View and manage your recent PII processing tasks.</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -186,18 +209,12 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
                       <FileText className="h-5 w-5 text-muted-foreground" />
                       <div>
                         <p className="font-medium">{process.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {process.piiFound} PII elements found • {process.time}
-                        </p>
+                        <p className="text-sm text-muted-foreground">{process.piiFound} PII elements found • {process.time}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant={process.status === 'completed' ? 'default' : 'secondary'}>
-                        {process.status}
-                      </Badge>
-                      <Button variant="ghost" size="sm">
-                        View
-                      </Button>
+                      <Badge variant={process.status === 'completed' ? 'default' : 'secondary'}>{process.status}</Badge>
+                      <Button variant="ghost" size="sm">View</Button>
                     </div>
                   </div>
                 ))}
@@ -205,23 +222,17 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
             </CardContent>
           </Card>
         </div>
-
-        {/* Right Panel - Options */}
         <div className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Processing Options</CardTitle>
-              <CardDescription>
-                Configure how your data is processed.
-              </CardDescription>
+              <CardDescription>Configure how your data is processed.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Detection Level</Label>
                 <Select defaultValue="high">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="low">Low Sensitivity</SelectItem>
                     <SelectItem value="medium">Medium Sensitivity</SelectItem>
@@ -230,13 +241,10 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
                   </SelectContent>
                 </Select>
               </div>
-
               <div className="space-y-2">
                 <Label>Output Format</Label>
                 <Select defaultValue="anonymized">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="anonymized">Anonymized</SelectItem>
                     <SelectItem value="redacted">Redacted</SelectItem>
@@ -245,9 +253,7 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
                   </SelectContent>
                 </Select>
               </div>
-
               <Separator />
-
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="preserve-format">Preserve Formatting</Label>
@@ -264,38 +270,25 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Button 
-                variant="outline" 
-                className="w-full justify-start"
-                onClick={() => onNavigate('settings')}
-              >
+              <Button variant="outline" className="w-full justify-start" onClick={() => onNavigate('settings')}>
                 <Settings className="mr-2 h-4 w-4" />
                 Configure PII Rules
               </Button>
-              <Button 
-                variant="outline" 
-                className="w-full justify-start"
-                onClick={() => onNavigate('logs')}
-              >
+              <Button variant="outline" className="w-full justify-start" onClick={() => onNavigate('logs')}>
                 <BarChart3 className="mr-2 h-4 w-4" />
                 View Processing Logs
               </Button>
-              <Button 
-                variant="outline" 
-                className="w-full justify-start"
-              >
+              <Button variant="outline" className="w-full justify-start">
                 <Plus className="mr-2 h-4 w-4" />
                 Create Template
               </Button>
             </CardContent>
           </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>System Status</CardTitle>
@@ -315,9 +308,7 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
                 </div>
                 <Progress value={68} className="h-2" />
               </div>
-              <div className="text-xs text-muted-foreground">
-                Last updated: Just now
-              </div>
+              <div className="text-xs text-muted-foreground">Last updated: Just now</div>
             </CardContent>
           </Card>
         </div>
