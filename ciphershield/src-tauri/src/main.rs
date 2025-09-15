@@ -270,48 +270,107 @@ async fn login(app: AppHandle, input: LoginInput) -> Result<LoginOutput, String>
 #[command]
 async fn process_files(app: AppHandle, input: FileInput) -> Result<ProcessOutput, String> {
     println!("Processing files: action={}, template_id={:?}", input.action, input.template_id);
-    let rng = SystemRandom::new();
-    let mut key = [0u8; 32];
-    rng.fill(&mut key).map_err(|e| e.to_string())?;
-    
-    let python_path = if cfg!(target_os = "windows") {
-        "cipherengine\\venv\\Scripts\\python.exe"
-    } else {
-        "cipherengine/venv/bin/python"
-    };
-    let script_path = "cipherengine/engine.py";
     let mut output_paths = Vec::new();
     let mut mappings: Vec<MappingItem> = Vec::new();
 
-    for file_path in input.files.iter() {
-        println!("Processing file: {:?}", file_path);
-        // Encrypt input file
-        let encrypted_path = file_path.with_extension("enc");
-        encrypt_file(&file_path, &encrypted_path, &key)?;
+    if input.action == "deanonymize" {
+        if let Some(id) = input.template_id {
+            let db = get_secure_db(&app)?;
+            let mappings_json: String = db
+                .query_row(
+                    "SELECT mappings FROM templates WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to fetch template: {}", e))?;
+            mappings = serde_json::from_str(&mappings_json).map_err(|e| format!("Failed to parse mappings: {}", e))?;
+        } else {
+            return Err("Template ID required for deanonymize".to_string());
+        }
+    }
 
-        // Prepare Python input
+    let is_debug = cfg!(debug_assertions);
+
+    let python_path_str = if is_debug {
+        if cfg!(target_os = "windows") {
+            r"C:\path\to\cipherengine\.venv\Scripts\python.exe".to_string() // Adjust for Windows
+        } else {
+            "/Users/dattakiran/Documents/Ivivid/New_ideas/CipherShield/ciphershield/cipherengine/.venv/bin/python".to_string()
+        }
+    } else {
+        let resolve_path = if cfg!(target_os = "windows") {
+            "cipherengine/.venv/Scripts/python.exe"
+        } else {
+            "cipherengine/.venv/bin/python"
+        };
+        app.path()
+            .resolve(resolve_path, tauri::path::BaseDirectory::Resource)
+            .map_err(|e| format!("Failed to resolve python path: {}", e))?
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    let script_path = if is_debug {
+        "/Users/dattakiran/Documents/Ivivid/New_ideas/CipherShield/ciphershield/cipherengine/engine.py".to_string()
+    } else {
+        app.path()
+            .resolve("cipherengine/engine.py", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| format!("Failed to resolve script path: {}", e))?
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    println!("Using Python path: {}", python_path_str);
+    println!("Using script path: {}", script_path);
+
+    for input_path in input.files {
+        println!("Processing file: {:?}", input_path);
+        let output_path = input_path.with_extension("processed");
+        let rng = SystemRandom::new();
+        let mut key = [0u8; 32];
+        rng.fill(&mut key).map_err(|e| format!("Failed to generate key: {}", e))?;
+        let encrypted_path = input_path.with_extension("enc");
+        encrypt_file(&input_path, &encrypted_path, &key)?;
+
+        let original_ext = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_string())
+            .unwrap_or_default();
+
         let python_input = serde_json::json!({
             "action": input.action,
             "input_path": encrypted_path.to_string_lossy(),
-            "output_path": file_path.with_extension("processed").to_string_lossy(),
-            "password": hex::encode(key),
-            "template_id": input.template_id,
-            "chunk_size": 1024 * 1024 // 1MB chunks
+            "output_path": output_path.to_string_lossy(),
+            "password": hex::encode(&key),
+            "mappings": mappings,
+            "chunk_size": 1024 * 1024,
+            "original_ext": original_ext
         });
-        let input_json = serde_json::to_string(&python_input).map_err(|e| e.to_string())?;
+        let input_json = serde_json::to_string(&python_input).map_err(|e| format!("Failed to serialize input: {}", e))?;
 
-        // Spawn Python
         println!("Executing Python script with input: {}", input_json);
-        let output = Command::new(python_path)
-            .arg(script_path)
+        let output = Command::new(&python_path_str)
+            .arg(&script_path)
             .arg(input_json)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let err_msg = format!("Failed to execute Python for file {:?}: {}", input_path, e);
+                println!("{}", err_msg);
+                err_msg
+            })?;
+
+        println!("Python stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("Python stderr: {}", String::from_utf8_lossy(&output.stderr));
 
         if output.status.success() {
-            let result: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+            let result: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+                let err_msg = format!("Failed to parse Python output: {}", e);
+                println!("{}", err_msg);
+                err_msg
+            })?;
             output_paths.push(result["output_path"].as_str().unwrap_or_default().to_string());
             if input.action == "anonymize" {
                 if let Some(items) = result["items"].as_array() {
@@ -319,14 +378,19 @@ async fn process_files(app: AppHandle, input: FileInput) -> Result<ProcessOutput
                         .iter()
                         .cloned()
                         .map(serde_json::from_value)
-                        .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
+                        .collect::<Result<_, _>>()
+                        .map_err(|e| {
+                            let err_msg = format!("Failed to parse mappings: {}", e);
+                            println!("{}", err_msg);
+                            err_msg
+                        })?;
                     mappings.extend(new_mappings);
                 }
             }
-            println!("Python script executed successfully");
+            println!("Python script executed successfully for file {:?}", input_path);
         } else {
             let error = String::from_utf8_lossy(&output.stderr).to_string();
-            println!("Python script error: {}", error);
+            println!("Python script failed for file {:?}: {}", input_path, error);
             return Ok(ProcessOutput {
                 result: "".to_string(),
                 output_paths: Vec::new(),
@@ -336,15 +400,16 @@ async fn process_files(app: AppHandle, input: FileInput) -> Result<ProcessOutput
         }
     }
 
-    // Save mappings as template if requested
-    let template_id = if !mappings.is_empty() && input.template_id.is_none() {
+    let template_id = if input.action == "anonymize" && !mappings.is_empty() && input.template_id.is_none() {
         let db = get_secure_db(&app)?;
         let template_name = format!("template_{}", Utc::now().timestamp());
-        let mappings_json = serde_json::to_string(&mappings).map_err(|e| e.to_string())?;
+        let mappings_json = serde_json::to_string(&mappings).map_err(|e| format!("Failed to serialize mappings: {}", e))?;
+        println!("Saving template: {} with {} mappings", template_name, mappings.len());
         db.execute(
             "INSERT INTO templates (name, mappings) VALUES (?1, ?2)",
             params![template_name, mappings_json],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| format!("Failed to save template: {}", e))?;
         Some(db.last_insert_rowid() as i32)
     } else {
         input.template_id
@@ -366,45 +431,88 @@ async fn process_text(app: AppHandle, input: TextInput) -> Result<ProcessOutput,
     let mut key = [0u8; 32];
     rng.fill(&mut key).map_err(|e| e.to_string())?;
 
-    // Write text to temp file
-    let temp_dir = app.path().app_local_data_dir().unwrap();
+    let temp_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
     let input_path = temp_dir.join("temp_input.txt");
     let encrypted_path = temp_dir.join("temp_input.enc");
     fs::write(&input_path, input.text).await.map_err(|e| e.to_string())?;
     encrypt_file(&input_path, &encrypted_path, &key)?;
 
-    let python_path = if cfg!(target_os = "windows") {
-        "cipherengine\\venv\\Scripts\\python.exe"
+    let is_debug = cfg!(debug_assertions);
+
+    let python_path_str = if is_debug {
+        if cfg!(target_os = "windows") {
+            r"C:\path\to\cipherengine\.venv\Scripts\python.exe".to_string() // Adjust for Windows
+        } else {
+            "/Users/dattakiran/Documents/Ivivid/New_ideas/CipherShield/ciphershield/cipherengine/.venv/bin/python".to_string()
+        }
     } else {
-        "cipherengine/venv/bin/python"
+        let resolve_path = if cfg!(target_os = "windows") {
+            "cipherengine/.venv/Scripts/python.exe"
+        } else {
+            "cipherengine/.venv/bin/python"
+        };
+        app.path()
+            .resolve(resolve_path, tauri::path::BaseDirectory::Resource)
+            .map_err(|e| format!("Failed to resolve python path: {}", e))?
+            .to_string_lossy()
+            .into_owned()
     };
-    let script_path = "cipherengine/engine.py";
+
+    let script_path = if is_debug {
+        "/Users/dattakiran/Documents/Ivivid/New_ideas/CipherShield/ciphershield/cipherengine/engine.py".to_string()
+    } else {
+        app.path()
+            .resolve("cipherengine/engine.py", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| format!("Failed to resolve script path: {}", e))?
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    println!("Using Python path: {}", python_path_str);
+    println!("Using script path: {}", script_path);
+
     let output_path = temp_dir.join("temp_output.txt");
     let python_input = serde_json::json!({
         "action": input.action,
         "input_path": encrypted_path.to_string_lossy(),
         "output_path": output_path.to_string_lossy(),
         "password": hex::encode(key),
-        "chunk_size": 1024 * 1024
+        "chunk_size": 1048576,
+        "original_ext": "txt"
     });
     let input_json = serde_json::to_string(&python_input).map_err(|e| e.to_string())?;
 
-    println!("Executing Python script for text processing");
-    let output = Command::new(python_path)
-        .arg(script_path)
+    println!("Executing Python script for text processing: {}", input_json);
+    let output = Command::new(&python_path_str)
+        .arg(&script_path)
         .arg(input_json)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            let err_msg = format!("Failed to execute Python: {}", e);
+            println!("{}", err_msg);
+            err_msg
+        })?;
+
+    println!("Python stdout: {}", String::from_utf8_lossy(&output.stdout));
+    println!("Python stderr: {}", String::from_utf8_lossy(&output.stderr));
 
     let mut template_id = None;
     let result_text;
     if output.status.success() {
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+            let err_msg = format!("Failed to parse Python output: {}", e);
+            println!("{}", err_msg);
+            err_msg
+        })?;
         let decrypted_path = temp_dir.join("temp_output.dec");
         decrypt_file(&output_path, &decrypted_path, &key)?;
-        result_text = fs::read_to_string(&decrypted_path).await.map_err(|e| e.to_string())?;
+        result_text = fs::read_to_string(&decrypted_path).await.map_err(|e| {
+            let err_msg = format!("Failed to read output: {}", e);
+            println!("{}", err_msg);
+            err_msg
+        })?;
 
         if input.save_template && input.action == "anonymize" {
             if let Some(items) = result["items"].as_array() {
@@ -412,21 +520,36 @@ async fn process_text(app: AppHandle, input: TextInput) -> Result<ProcessOutput,
                     .iter()
                     .cloned()
                     .map(serde_json::from_value)
-                    .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
+                    .collect::<Result<_, _>>()
+                    .map_err(|e| {
+                        let err_msg = format!("Failed to parse mappings: {}", e);
+                        println!("{}", err_msg);
+                        err_msg
+                    })?;
                 let db = get_secure_db(&app)?;
                 let template_name = input.template_name.unwrap_or(format!("template_{}", Utc::now().timestamp()));
-                let mappings_json = serde_json::to_string(&mappings).map_err(|e| e.to_string())?;
+                let mappings_json = serde_json::to_string(&mappings).map_err(|e| {
+                    let err_msg = format!("Failed to serialize mappings: {}", e);
+                    println!("{}", err_msg);
+                    err_msg
+                })?;
                 db.execute(
                     "INSERT INTO templates (name, mappings) VALUES (?1, ?2)",
                     params![template_name, mappings_json],
-                ).map_err(|e| e.to_string())?;
+                )
+                .map_err(|e| {
+                    let err_msg = format!("Failed to save template: {}", e);
+                    println!("{}", err_msg);
+                    err_msg
+                })?;
                 template_id = Some(db.last_insert_rowid() as i32);
+                println!("Saved template: {} with ID {}", template_name, template_id.unwrap());
             }
         }
         println!("Text processing successful");
     } else {
         let error = String::from_utf8_lossy(&output.stderr).to_string();
-        println!("Text processing error: {}", error);
+        println!("Text processing failed: {}", error);
         return Ok(ProcessOutput {
             result: "".to_string(),
             output_paths: Vec::new(),

@@ -39,9 +39,11 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
     const files = Array.from(e.dataTransfer.files).map(file => file.path);
     if (files.length > 0) {
       const result = await invoke('process_files', {
-        files,
-        action: 'anonymize',
-        template_id: null,
+        input: {
+          files,
+          action: 'anonymize',
+          template_id: null,
+        }
       });
       console.log(result);
       onNavigate('process');
@@ -55,9 +57,11 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
     });
     if (Array.isArray(selected) && selected.length > 0) {
       const result = await invoke('process_files', {
-        files: selected,
-        action: 'anonymize',
-        template_id: null,
+        input: {
+          files: selected,
+          action: 'anonymize',
+          template_id: null,
+        }
       });
       console.log(result);
       onNavigate('process');
@@ -67,10 +71,12 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
   const handleTextProcess = async () => {
     if (textInput.trim()) {
       const result = await invoke('process_text', {
-        text: textInput,
-        action: 'anonymize',
-        save_template: !!templateName,
-        template_name: templateName || undefined,
+        input: {
+          text: textInput,
+          action: 'anonymize',
+          save_template: !!templateName,
+          template_name: templateName || undefined,
+        }
       });
       console.log(result);
       setTextInput('');

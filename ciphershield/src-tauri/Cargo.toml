@@ -33,3 +33,6 @@ hex = "0.4"
 arrayref = "0.3"
 tauri-plugin-dialog = "2.0.0"
 
+#[[bin]]
+#name = "encrypt_test"
+#path = "src/encrypt_test.rs"
