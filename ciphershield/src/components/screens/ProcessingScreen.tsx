@@ -8,6 +8,7 @@ import { Separator } from '../ui/separator';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Textarea } from '../ui/textarea';
+import { Label } from '../ui/label';
 import { invoke } from '@tauri-apps/api/core';
 
 const steps = [
