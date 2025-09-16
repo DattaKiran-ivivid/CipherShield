@@ -183,6 +183,12 @@ async def process_file_endpoint(request: ProcessFileRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ssl_context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
-    uvicorn.run(app, host="0.0.0.0", port=8000, ssl=ssl_context)
+    # Run with direct SSL file parameters (no ssl_context)
+    uvicorn.run(
+        "server:app",  # "server" is the filename, "app" is the FastAPI instance
+        host="0.0.0.0",
+        port=8000,
+        ssl_keyfile="key.pem",
+        ssl_certfile="cert.pem",
+        reload=False  # Set to True for dev, but disable for production
+    )

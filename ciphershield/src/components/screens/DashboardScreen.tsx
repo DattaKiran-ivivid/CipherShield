@@ -61,6 +61,7 @@ export function DashboardScreen({ onNavigate }: DashboardScreenProps) {
           files: selected,
           action: 'anonymize',
           template_id: null,
+          save_template: false,
         }
       });
       console.log(result);
