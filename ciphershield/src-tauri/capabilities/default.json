@@ -7,6 +7,17 @@
     "core:default",
     "opener:default",
     "dialog:allow-open",
-    "dialog:default"
+    "dialog:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "spawn-cipher-server",
+          "cmd": "binaries/cipher-server",
+          "args": [],
+          "sidecar": true
+        }
+      ]
+    }
   ]
 }
